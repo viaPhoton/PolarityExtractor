@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { config } from "../config.js";
+import { PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT } from "../llm/prompts.js";
 import {
   buildDefaultSettings,
   type ProviderName,
@@ -35,6 +36,9 @@ const SettingsSchema = z.object({
   pdfRenderDpi: z.number().int().min(72).max(600),
   systemPrompt: z.string().min(1),
   userPrompt: z.string().min(1),
+  // Default to "v0" so settings.json files written before the field
+  // existed trigger the prompt-migration path on the next boot.
+  promptVersion: z.string().default("v0"),
 });
 
 export const SettingsPatchSchema = z.object({
@@ -76,7 +80,7 @@ export function loadSettings(): void {
     const parsed = JSON.parse(raw);
     const validated = SettingsSchema.safeParse(parsed);
     if (validated.success) {
-      current = validated.data;
+      current = migratePrompts(validated.data);
     } else {
       console.error(
         "[settings] settings.json failed validation, falling back to defaults:\n",
@@ -88,6 +92,31 @@ export function loadSettings(): void {
     console.error("[settings] failed to load settings.json:", e);
     current = buildDefaultSettings();
   }
+}
+
+/**
+ * Replace stale prompts with the current code defaults when the
+ * persisted `promptVersion` doesn't match the live `PROMPT_VERSION`.
+ * Other settings (API keys, models, temperature, ...) are preserved
+ * untouched so users don't lose their configuration on upgrades.
+ *
+ * Persists the migrated settings back to disk so subsequent boots are
+ * a no-op until the next prompt-schema change.
+ */
+function migratePrompts(loaded: RuntimeSettings): RuntimeSettings {
+  if (loaded.promptVersion === PROMPT_VERSION) return loaded;
+  console.warn(
+    `[settings] migrating prompts ${loaded.promptVersion} -> ${PROMPT_VERSION} (resetting systemPrompt + userPrompt to current defaults)`,
+  );
+  const migrated: RuntimeSettings = {
+    ...loaded,
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: USER_PROMPT,
+    promptVersion: PROMPT_VERSION,
+  };
+  current = migrated;
+  persist();
+  return migrated;
 }
 
 export function getSettings(): RuntimeSettings {

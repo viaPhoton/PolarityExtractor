@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPT, USER_PROMPT } from "../llm/prompts.js";
+import { PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT } from "../llm/prompts.js";
 
 export type ProviderName = "anthropic" | "google";
 
@@ -34,6 +34,15 @@ export interface RuntimeSettings {
   systemPrompt: string;
   /** User prompt sent alongside the rendered drawing pages. */
   userPrompt: string;
+  /**
+   * Stamp matching `PROMPT_VERSION` from `apps/api/src/llm/prompts.ts`.
+   * When the persisted value differs from the current code default, the
+   * settings store auto-replaces `systemPrompt`/`userPrompt` with the
+   * baked-in defaults. This is how schema-incompatible prompt upgrades
+   * (e.g. moving to the polarity-template wire shape) propagate to
+   * existing installs without manual settings.json edits.
+   */
+  promptVersion: string;
 }
 
 export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
@@ -78,6 +87,7 @@ export function buildDefaultSettings(): RuntimeSettings {
     pdfRenderDpi,
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: USER_PROMPT,
+    promptVersion: PROMPT_VERSION,
   };
 }
 

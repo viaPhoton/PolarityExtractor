@@ -1,10 +1,10 @@
 import type { ExtractedDrawing } from "@polarity/shared";
-import { ExtractedDrawing as ExtractedDrawingSchema } from "@polarity/shared";
 import type { SourcePage, SupportedImageType } from "../source/types.js";
 import { getActiveModel, getActiveProvider, getSettings } from "../settings/store.js";
 import { retryUserPrompt } from "./prompts.js";
 import { extractWithAnthropic } from "./anthropic.js";
 import { extractWithGoogle } from "./google.js";
+import { ExtractedDrawingWire, hydrateExtractedDrawing } from "./wire.js";
 
 export interface ExtractResult {
   drawing: ExtractedDrawing;
@@ -132,10 +132,10 @@ export async function runExtraction(
       continue;
     }
 
-    const result = ExtractedDrawingSchema.safeParse(parsed);
+    const result = ExtractedDrawingWire.safeParse(parsed);
     if (result.success) {
       return {
-        drawing: result.data,
+        drawing: hydrateExtractedDrawing(result.data),
         attempts: attempt,
         provider: transport.name,
         model: transport.model,
