@@ -1,3 +1,7 @@
+// MUST be the first import: attaches DOMMatrix to globalThis before
+// pdfjs-dist (loaded by pdf-to-img below) initialises its own partial
+// shim. See ./polyfills.ts for the full story.
+import "./polyfills.js";
 import { pdf } from "pdf-to-img";
 import { readImageSize } from "../source/image-size.js";
 import type { SourcePage } from "../source/types.js";
