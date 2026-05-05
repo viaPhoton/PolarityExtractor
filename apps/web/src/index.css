@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+}
+
+/* react-pdf workaround: the package ships its own CSS but Vite needs us
+   to load it from the consumer side. Re-exported here so we don't have
+   to import it in every page. */
+.react-pdf__Page__canvas {
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto !important;
+}
+.react-pdf__Page__textContent,
+.react-pdf__Page__annotations {
+  display: none;
+}
