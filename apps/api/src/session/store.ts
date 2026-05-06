@@ -7,6 +7,9 @@ import type {
   SessionStatus,
 } from "@polarity/shared";
 import { config } from "../config.js";
+import { createLogger, shortId } from "../log.js";
+
+const log = createLogger("session");
 
 /**
  * Granular sub-step inside the broad `status` lifecycle. Surfaced to
@@ -131,10 +134,19 @@ export function startJanitor(): void {
   const SIX_HOURS = 6 * 60 * 60 * 1000;
   setInterval(() => {
     const now = Date.now();
+    let dropped = 0;
     for (const [id, s] of sessions) {
       if (now - s.createdAt > SIX_HOURS) {
         void deleteSession(id);
+        dropped += 1;
+        log.info("janitor dropped", { session: shortId(id) });
       }
+    }
+    if (dropped > 0) {
+      log.info("janitor sweep", {
+        dropped,
+        remaining: sessions.size,
+      });
     }
   }, 30 * 60 * 1000).unref();
 }

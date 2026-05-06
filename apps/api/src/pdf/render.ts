@@ -5,6 +5,9 @@ import "./polyfills.js";
 import { pdf } from "pdf-to-img";
 import { readImageSize } from "../source/image-size.js";
 import type { SourcePage } from "../source/types.js";
+import { createLogger, formatBytes, formatMs } from "../log.js";
+
+const log = createLogger("pdf");
 
 export interface RenderProgress {
   /** Total page count. Reported once, before any pages are rendered. */
@@ -30,10 +33,14 @@ export async function renderPdfPages(
   progress: RenderProgress = {},
 ): Promise<SourcePage[]> {
   const scale = dpi / 96;
+  const startedAt = Date.now();
+  log.info("opening pdf", { path: pdfPath, dpi, scale: scale.toFixed(2) });
+
   const document = await pdf(pdfPath, { scale });
 
   const total = document.length;
   progress.onTotal?.(total);
+  log.info("rendering pages", { pages: total, dpi });
 
   const pages: SourcePage[] = [];
   let index = 0;
@@ -48,6 +55,18 @@ export async function renderPdfPages(
     });
     index += 1;
     progress.onPage?.(index, total);
+    log.debug("page rendered", {
+      page: `${index}/${total}`,
+      size: `${width}x${height}`,
+      bytes: formatBytes(png.byteLength),
+    });
   }
+
+  const totalBytes = pages.reduce((acc, p) => acc + p.image.byteLength, 0);
+  log.info("pdf rendered", {
+    pages: total,
+    bytes: formatBytes(totalBytes),
+    took: formatMs(Date.now() - startedAt),
+  });
   return pages;
 }

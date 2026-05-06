@@ -4,10 +4,12 @@ import { createSession, requireSession, setStage } from "../session/store.js";
 import { prepareSource, ACCEPTED_MIME_TYPES, detectMediaType } from "../source/prepare.js";
 import { toPageImage } from "../source/types.js";
 import { extractDrawing } from "../llm/extract.js";
-import { validateDrawing } from "../polarity/validate.js";
+import { validateDrawing, hasBlockingIssues } from "../polarity/validate.js";
 import { assertActiveProviderKey, getSettings } from "../settings/store.js";
+import { createLogger, formatBytes, formatMs, shortId } from "../log.js";
 
 export const uploadRouter = Router();
+const log = createLogger("upload");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -64,6 +66,12 @@ uploadRouter.post(
         file.buffer,
         file.mimetype || "application/octet-stream",
       );
+      log.info("session created", {
+        session: shortId(session.id),
+        file: session.pdfFilename,
+        mime: session.mimeType,
+        size: formatBytes(file.size),
+      });
       res.json({ sessionId: session.id });
 
       // Kick off extraction asynchronously. Errors are stored on the
@@ -73,6 +81,11 @@ uploadRouter.post(
         s.status = "error";
         s.stage = "done";
         s.error = e instanceof Error ? e.message : String(e);
+        log.error("extraction failed", {
+          session: shortId(session.id),
+          message: e instanceof Error ? e.message : String(e),
+        });
+        if (e instanceof Error && e.stack) console.error(e.stack);
       });
     } catch (e) {
       next(e);
@@ -89,8 +102,11 @@ function pickFile(req: import("express").Request): Express.Multer.File | undefin
 
 async function runExtraction(sessionId: string): Promise<void> {
   const s = requireSession(sessionId);
+  const sessionTag = shortId(sessionId);
+  const startedAt = Date.now();
   s.status = "extracting";
   setStage(s, "rendering_pages");
+  log.info("extraction start", { session: sessionTag, file: s.pdfFilename });
 
   const pages = await prepareSource(
     {
@@ -114,7 +130,7 @@ async function runExtraction(sessionId: string): Promise<void> {
   s.pageImages = pages.map(toPageImage);
 
   setStage(s, "calling_model");
-  const { drawing } = await extractDrawing(pages, {
+  const { drawing, attempts, provider, model } = await extractDrawing(pages, {
     onAttempt: (attempt) => {
       s.modelAttempts = attempt;
       setStage(s, attempt === 1 ? "calling_model" : "retrying");
@@ -128,7 +144,18 @@ async function runExtraction(sessionId: string): Promise<void> {
   s.status = "needs_verification";
   setStage(s, "done");
 
-  // Pre-compute validation so the UI can show the green/red flags.
-  const _validation = validateDrawing(drawing);
-  void _validation;
+  const validation = validateDrawing(drawing);
+  const failingPairs = validation.filter((v) => v.issues.length > 0).length;
+  log.info("extraction done", {
+    session: sessionTag,
+    provider,
+    model,
+    attempts,
+    pairs: drawing.connectorPairs.length,
+    fibers: drawing.totalFibers,
+    polarity: drawing.polarityType,
+    blocking: hasBlockingIssues(validation),
+    failingPairs,
+    took: formatMs(Date.now() - startedAt),
+  });
 }

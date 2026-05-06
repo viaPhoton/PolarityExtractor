@@ -4,8 +4,10 @@ import { z } from "zod";
 import { requireSession } from "../session/store.js";
 import { generateTestPlan } from "../inject/output.js";
 import { hasBlockingIssues, validateDrawing } from "../polarity/validate.js";
+import { createLogger, formatMs, shortId } from "../log.js";
 
 export const generateRouter = Router();
+const log = createLogger("generate");
 
 const GenerateRequest = z.object({ sessionId: z.string() });
 
@@ -34,12 +36,25 @@ generateRouter.post("/", async (req, res, next) => {
     }
 
     s.status = "generating";
+    const startedAt = Date.now();
+    log.info("build start", {
+      session: shortId(s.id),
+      pairs: drawing.connectorPairs.length,
+      fibers: drawing.totalFibers,
+      polarity: drawing.polarityType,
+    });
     const sessionDir = path.dirname(s.pdfPath);
     const result = await generateTestPlan(sessionDir, drawing);
     s.outputPath = result.filePath;
     s.outputFilename = result.filename;
     s.fibersPerCable = result.fibersPerCable;
     s.status = "ready";
+    log.info("build ok", {
+      session: shortId(s.id),
+      filename: result.filename,
+      fibersPerCable: result.fibersPerCable,
+      took: formatMs(Date.now() - startedAt),
+    });
 
     res.json({
       sessionId: s.id,
@@ -47,6 +62,10 @@ generateRouter.post("/", async (req, res, next) => {
       fibersPerCable: result.fibersPerCable,
     });
   } catch (e) {
+    log.error("build failed", {
+      message: e instanceof Error ? e.message : String(e),
+    });
+    if (e instanceof Error && e.stack) console.error(e.stack);
     next(e);
   }
 });

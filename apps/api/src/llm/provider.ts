@@ -5,6 +5,9 @@ import { retryUserPrompt } from "./prompts.js";
 import { extractWithAnthropic } from "./anthropic.js";
 import { extractWithGoogle } from "./google.js";
 import { ExtractedDrawingWire, hydrateExtractedDrawing } from "./wire.js";
+import { createLogger, formatBytes, formatMs } from "../log.js";
+
+const log = createLogger("llm");
 
 export interface ExtractResult {
   drawing: ExtractedDrawing;
@@ -87,12 +90,25 @@ export async function runExtraction(
     mediaType: p.mediaType,
     data: p.image.toString("base64"),
   }));
+  const totalBytes = pages.reduce((acc, p) => acc + p.image.byteLength, 0);
+  log.info("dispatch", {
+    provider: transport.name,
+    model: transport.model,
+    pages: pages.length,
+    bytes: formatBytes(totalBytes),
+  });
 
   let lastRaw = "";
   let lastError = "";
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     hooks.onAttempt?.(attempt);
+    const attemptStartedAt = Date.now();
+    log.info("attempt start", {
+      attempt,
+      provider: transport.name,
+      model: transport.model,
+    });
     // Snapshot the prompts at each attempt so changes made via the
     // Settings page during a long-running extraction are picked up on
     // the retry.
@@ -115,11 +131,24 @@ export async function runExtraction(
       });
     } catch (e) {
       if (e instanceof NonRetryableExtractionError) {
+        log.error("non-retryable transport error", {
+          attempt,
+          message: e.message,
+        });
         throw new Error(`${transport.name} extraction aborted: ${e.message}`);
       }
+      log.error("transport error", {
+        attempt,
+        message: e instanceof Error ? e.message : String(e),
+      });
       throw e;
     }
     lastRaw = raw;
+    log.info("attempt response", {
+      attempt,
+      took: formatMs(Date.now() - attemptStartedAt),
+      chars: raw.length,
+    });
 
     hooks.onValidating?.();
 
@@ -129,21 +158,37 @@ export async function runExtraction(
       parsed = JSON.parse(json);
     } catch (e) {
       lastError = `Invalid JSON: ${(e as Error).message}`;
+      log.warn("invalid json", { attempt, message: (e as Error).message });
       continue;
     }
 
     const result = ExtractedDrawingWire.safeParse(parsed);
     if (result.success) {
+      const drawing = hydrateExtractedDrawing(result.data);
+      log.info("extraction ok", {
+        attempt,
+        took: formatMs(Date.now() - attemptStartedAt),
+        partNumber: drawing.partNumber,
+        totalFibers: drawing.totalFibers,
+        fibersPerConnector: drawing.fibersPerConnector,
+        polarityType: drawing.polarityType,
+        pairs: drawing.connectorPairs.length,
+      });
       return {
-        drawing: hydrateExtractedDrawing(result.data),
+        drawing,
         attempts: attempt,
         provider: transport.name,
         model: transport.model,
       };
     }
     lastError = JSON.stringify(result.error.issues, null, 2);
+    log.warn("validation failed", {
+      attempt,
+      issues: result.error.issues.length,
+    });
   }
 
+  log.error("extraction gave up after 2 attempts");
   throw new Error(
     `${transport.name} extraction failed validation after 2 attempts. Last error:\n${lastError}\n\nLast raw response (first 500 chars):\n${lastRaw.slice(0, 500)}`,
   );

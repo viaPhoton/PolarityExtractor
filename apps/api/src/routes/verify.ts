@@ -2,8 +2,10 @@ import { Router } from "express";
 import { ExtractedDrawing, VerifyRequest } from "@polarity/shared";
 import { requireSession } from "../session/store.js";
 import { validateDrawing, hasBlockingIssues } from "../polarity/validate.js";
+import { createLogger, shortId } from "../log.js";
 
 export const verifyRouter = Router();
+const log = createLogger("verify");
 
 /**
  * POST /verify - persist the user's edits to the in-memory session.
@@ -21,7 +23,15 @@ verifyRouter.post("/", (req, res) => {
   const drawing = ExtractedDrawing.parse(parsed.data.edited);
   s.edited = drawing;
   const validation = validateDrawing(drawing);
-  s.status = hasBlockingIssues(validation) ? "needs_verification" : "verified";
+  const blocking = hasBlockingIssues(validation);
+  s.status = blocking ? "needs_verification" : "verified";
+  log.info("verify saved", {
+    session: shortId(s.id),
+    status: s.status,
+    pairs: drawing.connectorPairs.length,
+    failingPairs: validation.filter((v) => v.issues.length > 0).length,
+    blocking,
+  });
   res.json({
     sessionId: s.id,
     status: s.status,
